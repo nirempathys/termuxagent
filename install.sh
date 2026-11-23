@@ -28,6 +28,64 @@ banner() {
 	printf '%s claude code + opencode v2 on termux via glibc %s\n\n' "$c_dim" "$c_reset"
 }
 
+tui_check() {
+	local command="$1" name="$2" log rc
+	log="${TMPDIR:-$PREFIX/tmp}/termuxagent-$name-tui.log"
+	if ! command -v script >/dev/null 2>&1; then
+		warn "$name tui skipped, script not available"
+		return 0
+	fi
+	timeout 10 script -qec "$command" /dev/null </dev/null >"$log" 2>&1
+	rc=$?
+	if [ "$rc" -eq 124 ]; then
+		ok "$name tui booted and stayed alive"
+		return 0
+	fi
+	if [ "$rc" -eq 0 ] && [ -s "$log" ]; then
+		ok "$name tui started and exited cleanly"
+		return 0
+	fi
+	warn "$name tui failed, rc=$rc"
+	tail -n 5 "$log" 2>/dev/null
+	return 1
+}
+
+verify_flow() {
+	local current failures=0
+	line
+	info "checking claude code"
+	if claude_installed && [ -x "$CLAUDE_LINK" ]; then
+		current="$("$CLAUDE_LINK" --version 2>&1 | head -n1)"
+		ok "claude version: $current"
+		tui_check "$CLAUDE_LINK" claude || failures=$((failures + 1))
+	else
+		warn "claude code is not installed"
+		failures=$((failures + 1))
+	fi
+	line
+	info "checking opencode"
+	if opencode_installed; then
+		current="$(opencode_version)"
+		ok "opencode version: $current"
+		if command -v opencode >/dev/null 2>&1; then
+			ok "opencode path: $(command -v opencode)"
+		else
+			warn "opencode is not on PATH, repair with menu 2"
+			failures=$((failures + 1))
+		fi
+		tui_check "$OPENCODE_CMD" opencode || failures=$((failures + 1))
+	else
+		warn "opencode is not installed"
+		failures=$((failures + 1))
+	fi
+	line
+	if [ "$failures" -eq 0 ]; then
+		ok "all checks passed"
+	else
+		warn "$failures check failed"
+	fi
+}
+
 prepare_base() {
 	info "running pkg update"
 	pkg update -y "${APT_OPTS[@]}"
@@ -85,6 +143,7 @@ menu() {
 		printf '  2) opencode\n'
 		printf '  3) both\n'
 		printf '  4) shell shortcut\n'
+		printf '  5) verify install\n'
 		printf '  0) exit\n'
 		line
 		read -rp 'select: ' choice || exit 0
@@ -97,6 +156,7 @@ menu() {
 			opencode_flow
 			;;
 		4) claude_shortcut ;;
+		5) verify_flow ;;
 		0 | q | Q) exit 0 ;;
 		*) warn "invalid selection" ;;
 		esac

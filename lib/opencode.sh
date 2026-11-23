@@ -89,5 +89,9 @@ opencode_install() {
 	rm -rf "$tmp"
 	opencode_write_launcher
 	ensure_path "$HOME_DIR/bin"
+	if [ -e "$PREFIX/bin/opencode" ] && [ ! -L "$PREFIX/bin/opencode" ]; then
+		mv "$PREFIX/bin/opencode" "$PREFIX/bin/opencode.bak.$(date +%s)"
+	fi
+	ln -sfn "$OPENCODE_CMD" "$PREFIX/bin/opencode"
 	ok "opencode $version installed"
 }
