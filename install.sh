@@ -12,6 +12,9 @@ if [ ! -f "$ROOT/lib/common.sh" ]; then
 	}
 	staging="$(mktemp -d "${TMPDIR:-/data/data/com.termux/files/usr/tmp}/termuxagent.XXXXXX")"
 	curl -fsSL "$REPO_ARCHIVE" | tar -xz -C "$staging"
+	if [ -r /dev/tty ]; then
+		exec bash "$staging/termuxagent-main/install.sh" </dev/tty
+	fi
 	exec bash "$staging/termuxagent-main/install.sh"
 fi
 
@@ -46,7 +49,10 @@ claude_flow() {
 		ok "claude already installed: $current"
 		confirm "install or switch claude version?" || return 0
 	fi
-	version="$(pick_version "$CLAUDE_NATIVE_PKG" "claude code" "$current")"
+	if ! version="$(pick_version "$CLAUDE_NATIVE_PKG" "claude code" "$current")"; then
+		warn "claude install cancelled"
+		return 0
+	fi
 	claude_install "$version"
 	claude_shortcut
 	installed="$("$CLAUDE_LINK" --version 2>/dev/null | head -n1 || true)"
@@ -61,7 +67,10 @@ opencode_flow() {
 		ok "opencode already installed: $current"
 		confirm "install or switch opencode version?" || return 0
 	fi
-	version="$(pick_version "$OPENCODE_PKG" "opencode" "$current")"
+	if ! version="$(pick_version "$OPENCODE_PKG" "opencode" "$current")"; then
+		warn "opencode install cancelled"
+		return 0
+	fi
 	opencode_install "$version"
 	installed="$(opencode_version || true)"
 	[ -n "$installed" ] || die "opencode verification failed, run opencode --version manually"
@@ -80,6 +89,7 @@ menu() {
 		line
 		read -rp 'select: ' choice || exit 0
 		case "$choice" in
+		'') exit 0 ;;
 		1) claude_flow ;;
 		2) opencode_flow ;;
 		3)

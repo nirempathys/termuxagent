@@ -98,7 +98,7 @@ pick_version() {
 				return 0
 			fi
 			;;
-		'') ;;
+		'') die "no version selected" ;;
 		*[!0-9]*) ;;
 		*)
 			if [ "$choice" -ge 1 ] && [ "$choice" -le "${#versions[@]}" ]; then
