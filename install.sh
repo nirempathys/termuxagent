@@ -22,10 +22,23 @@ fi
 . "$ROOT/lib/glibc.sh"
 . "$ROOT/lib/claude.sh"
 . "$ROOT/lib/opencode.sh"
+. "$ROOT/lib/agents.sh"
 
 banner() {
 	printf '\n%s termuxagent %s\n' "$c_orange" "$c_reset"
-	printf '%s claude code + opencode v2 on termux via glibc %s\n\n' "$c_dim" "$c_reset"
+	printf '%s agent installer for termux: glibc natives, npm cli, apt builds %s\n\n' "$c_dim" "$c_reset"
+}
+
+claude_shortcut() {
+	local rc block
+	block='# termuxagent
+claudesettings() { nano "$HOME/.claude/settings.json"; }'
+	for rc in "$HOME_DIR/.bashrc" "$HOME_DIR/.zshrc"; do
+		[ -f "$rc" ] || continue
+		grep -Fq '# termuxagent' "$rc" 2>/dev/null && continue
+		printf '\n%s\n' "$block" >>"$rc"
+	done
+	ok "claudesettings shortcut available after shell reload"
 }
 
 tui_check() {
@@ -50,33 +63,83 @@ tui_check() {
 	return 1
 }
 
-verify_flow() {
-	local current failures=0
-	line
-	info "checking claude code"
-	if claude_installed && [ -x "$CLAUDE_LINK" ]; then
-		current="$("$CLAUDE_LINK" --version 2>&1 | head -n1)"
-		ok "claude version: $current"
-		tui_check "$CLAUDE_LINK" claude || failures=$((failures + 1))
-	else
-		warn "claude code is not installed"
-		failures=$((failures + 1))
+prepare_base() {
+	info "running pkg update"
+	pkg update -y "${APT_OPTS[@]}"
+	info "running pkg upgrade"
+	pkg upgrade -y "${APT_OPTS[@]}"
+	info "installing python nodejs curl tar gnupg"
+	pkg install -y "${APT_OPTS[@]}" python nodejs curl tar gnupg
+	require python3
+	require npm
+	require curl
+	require tar
+	command -v gpg >/dev/null 2>&1 || warn "gpg missing, hermes key check will install it"
+	ok "base packages ready"
+}
+
+agent_flow() {
+	local key="$1" label current version
+	label="$(agent_label "$key")"
+	current="$("${key}_version" 2>/dev/null || true)"
+	if [ -n "$current" ]; then
+		ok "$label already installed: $current"
+		confirm "install or switch $label version?" || return 0
 	fi
-	line
-	info "checking opencode"
-	if opencode_installed; then
-		current="$(opencode_version)"
-		ok "opencode version: $current"
-		if command -v opencode >/dev/null 2>&1; then
-			ok "opencode path: $(command -v opencode)"
+	if ! version="$(agent_pick "$key" "$label" "$current")"; then
+		warn "$label install cancelled"
+		return 0
+	fi
+	if [ -z "$version" ]; then
+		warn "$label install cancelled"
+		return 0
+	fi
+	"${key}_install" "$version"
+	current="$("${key}_version" 2>/dev/null || true)"
+	[ -n "$current" ] || die "$label verification failed, run $(agent_command "$key") --version manually"
+	ok "$label ready: $current"
+}
+
+all_flows() {
+	local key
+	for key in $AGENT_KEYS; do
+		(agent_flow "$key") || warn "$(agent_label "$key") skipped"
+	done
+}
+
+verify_flow() {
+	local key label command current failures=0 tui_cmd
+	local installed=()
+	for key in $AGENT_KEYS; do
+		label="$(agent_label "$key")"
+		command="$(agent_command "$key")"
+		current="$("${key}_version" 2>/dev/null || true)"
+		if [ -z "$current" ]; then
+			warn "$label: not installed"
+			continue
+		fi
+		ok "$label: $current"
+		if command -v "$command" >/dev/null 2>&1; then
+			printf '    %s -> %s\n' "$command" "$(command -v "$command")"
+			installed+=("$key")
 		else
-			warn "opencode is not on PATH, repair with menu 2"
+			warn "$command not found on PATH"
 			failures=$((failures + 1))
 		fi
-		tui_check "$OPENCODE_CMD" opencode || failures=$((failures + 1))
-	else
-		warn "opencode is not installed"
-		failures=$((failures + 1))
+	done
+	line
+	if [ "${#installed[@]}" -eq 0 ]; then
+		warn "no agent installed yet"
+		return 0
+	fi
+	if confirm "run tui smoke test for ${#installed[@]} installed agent(s)?"; then
+		for key in "${installed[@]}"; do
+			tui_cmd="$(agent_tui_cmd "$key")" || {
+				warn "$(agent_label "$key"): no tui probe, cli verified"
+				continue
+			}
+			tui_check "$tui_cmd" "$key" || failures=$((failures + 1))
+		done
 	fi
 	line
 	if [ "$failures" -eq 0 ]; then
@@ -86,79 +149,39 @@ verify_flow() {
 	fi
 }
 
-prepare_base() {
-	info "running pkg update"
-	pkg update -y "${APT_OPTS[@]}"
-	info "running pkg upgrade"
-	pkg upgrade -y "${APT_OPTS[@]}"
-	info "installing python nodejs curl tar"
-	pkg install -y "${APT_OPTS[@]}" python nodejs curl tar
-	require python3
-	require npm
-	require curl
-	require tar
-	ok "base packages ready"
-}
-
-claude_flow() {
-	local current version installed
-	current="$(claude_version)"
-	if [ -n "$current" ]; then
-		ok "claude already installed: $current"
-		confirm "install or switch claude version?" || return 0
-	fi
-	if ! version="$(pick_version "$CLAUDE_NATIVE_PKG" "claude code" "$current")"; then
-		warn "claude install cancelled"
-		return 0
-	fi
-	claude_install "$version"
-	claude_shortcut
-	installed="$("$CLAUDE_LINK" --version 2>/dev/null | head -n1 || true)"
-	[ -n "$installed" ] || die "claude verification failed, run claude --version manually"
-	ok "claude ready: $installed"
-}
-
-opencode_flow() {
-	local current version installed
-	current="$(opencode_version || true)"
-	if [ -n "$current" ]; then
-		ok "opencode already installed: $current"
-		confirm "install or switch opencode version?" || return 0
-	fi
-	if ! version="$(pick_version "$OPENCODE_PKG" "opencode" "$current")"; then
-		warn "opencode install cancelled"
-		return 0
-	fi
-	opencode_install "$version"
-	installed="$(opencode_version || true)"
-	[ -n "$installed" ] || die "opencode verification failed, run opencode --version manually"
-	ok "opencode ready: $installed"
-}
-
 menu() {
-	local choice
+	local choice index line_no
+	local keys=()
+	mapfile -t keys < <(printf '%s\n' $AGENT_KEYS)
 	while :; do
 		line
-		printf '  1) claude code\n'
-		printf '  2) opencode\n'
-		printf '  3) both\n'
-		printf '  4) shell shortcut\n'
-		printf '  5) verify install\n'
+		for index in "${!keys[@]}"; do
+			printf '  %d) %s\n' "$((index + 1))" "$(agent_label "${keys[$index]}")"
+			if [ $(((index + 1) % 3)) -eq 0 ] && [ $((index + 1)) -lt "${#keys[@]}" ]; then
+				printf '\n'
+			fi
+		done
+		printf '\n'
+		printf '  a) all\n'
+		printf '  s) shell shortcut\n'
+		printf '  v) verify install\n'
 		printf '  0) exit\n'
 		line
 		read -rp 'select: ' choice || exit 0
 		case "$choice" in
 		'') exit 0 ;;
-		1) claude_flow ;;
-		2) opencode_flow ;;
-		3)
-			claude_flow
-			opencode_flow
-			;;
-		4) claude_shortcut ;;
-		5) verify_flow ;;
+		a | A) all_flows ;;
+		s | S) claude_shortcut ;;
+		v | V) verify_flow ;;
 		0 | q | Q) exit 0 ;;
-		*) warn "invalid selection" ;;
+		*[!0-9]*) warn "invalid selection" ;;
+		*)
+			if [ "$choice" -ge 1 ] && [ "$choice" -le "${#keys[@]}" ]; then
+				agent_flow "${keys[$((choice - 1))]}"
+			else
+				warn "invalid selection"
+			fi
+			;;
 		esac
 	done
 }

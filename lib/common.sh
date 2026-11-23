@@ -53,14 +53,24 @@ confirm() {
 }
 
 npm_versions() {
-	local pkg="$1" count="$2"
+	local pkg="$1" count="$2" pre="${3:-0}"
 	curl -fsSL --max-time 40 "$REGISTRY/${pkg//\//%2f}" | python3 -c '
 import json, re, sys
 data = json.load(sys.stdin)
-keep = [v for v, m in data["versions"].items() if re.fullmatch(r"\d+\.\d+\.\d+", v) and not m.get("deprecated")]
-keep.sort(key=lambda v: tuple(int(x) for x in v.split(".")))
+times = data.get("time", {})
+allow_pre = sys.argv[2] == "1"
+
+def stable(v, meta):
+    if meta.get("deprecated"):
+        return False
+    if re.fullmatch(r"\d+\.\d+\.\d+", v):
+        return True
+    return allow_pre and bool(re.fullmatch(r"\d+\.\d+\.\d+-[0-9A-Za-z.-]+", v))
+
+keep = [v for v, m in data["versions"].items() if stable(v, m)]
+keep.sort(key=lambda v: times.get(v, ""))
 print("\n".join(reversed(keep[-int(sys.argv[1]):])))
-' "$count"
+' "$count" "$pre"
 }
 
 npm_latest() {
@@ -69,9 +79,9 @@ npm_latest() {
 }
 
 pick_version() {
-	local pkg="$1" label="$2" current="$3" choice index version
+	local pkg="$1" label="$2" current="$3" pre="${4:-0}" choice index version
 	local versions=()
-	mapfile -t versions < <(npm_versions "$pkg" 5)
+	mapfile -t versions < <(npm_versions "$pkg" 5 "$pre")
 	[ "${#versions[@]}" -gt 0 ] || die "cannot fetch $label version list"
 	printf '%s\n' "$label available versions:" >&2
 	for index in "${!versions[@]}"; do
@@ -122,6 +132,51 @@ ensure_path() {
 		grep -Fqx "export PATH=\"$dir:\$PATH\"" "$rc" 2>/dev/null && continue
 		printf '\nexport PATH="%s:$PATH"\n' "$dir" >>"$rc"
 	done
+}
+
+glibc_ldso_path() {
+	local candidate
+	for candidate in "$GLIBC_LIB"/ld-linux-*.so.*; do
+		[ -e "$candidate" ] && printf '%s\n' "$candidate" && return 0
+	done
+	return 1
+}
+
+npm_fix_shebang() {
+	local target resolved
+	target="$1"
+	resolved="$(readlink -f "$target" 2>/dev/null || true)"
+	if [ -z "$resolved" ] || [ ! -f "$resolved" ]; then
+		return 0
+	fi
+	python3 - "$resolved" "$PREFIX/bin/node" <<'PY'
+import sys
+
+path, node = sys.argv[1], sys.argv[2]
+raw = open(path, "rb").read()
+first, sep, rest = raw.partition(b"\n")
+if first.startswith(b"#!/usr/bin/env node"):
+    with open(path, "wb") as handle:
+        handle.write(("#!" + node).encode() + sep + rest)
+PY
+}
+
+node_pkg_version() {
+	local file="$1"
+	[ -f "$file" ] || return 0
+	python3 -c 'import json, sys; print(json.load(open(sys.argv[1]))["version"])' "$file" 2>/dev/null || true
+}
+
+patchelf_cmd() {
+	local candidate
+	for candidate in "$PREFIX/glibc/bin/patchelf" "$(command -v patchelf 2>/dev/null || true)"; do
+		[ -n "$candidate" ] && [ -x "$candidate" ] && printf '%s\n' "$candidate" && return 0
+	done
+	pkg install -y "${APT_OPTS[@]}" patchelf >/dev/null 2>&1 || true
+	for candidate in "$PREFIX/glibc/bin/patchelf" "$(command -v patchelf 2>/dev/null || true)"; do
+		[ -n "$candidate" ] && [ -x "$candidate" ] && printf '%s\n' "$candidate" && return 0
+	done
+	return 1
 }
 
 detect_arch
