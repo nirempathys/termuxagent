@@ -27,6 +27,7 @@ claude_write_wrapper() {
 #!@BASH@
 set -euo pipefail
 export DISABLE_AUTOUPDATER=1
+export TMPDIR="${TMPDIR:-@TMPDIR@}"
 native="@NATIVE@"
 ldso="@LDSO@"
 libdir="@LIBDIR@"
@@ -55,6 +56,7 @@ unset LD_PRELOAD
 exec "$ldso" --library-path "$libdir" "$native" "${extra[@]}" "$@"
 WRAPPER
 	sed -e "s|@BASH@|$PREFIX/bin/bash|g" \
+		-e "s|@TMPDIR@|$PREFIX/tmp|g" \
 		-e "s|@NATIVE@|$CLAUDE_NATIVE|g" \
 		-e "s|@LDSO@|$GLIBC_LDSO|g" \
 		-e "s|@LIBDIR@|$GLIBC_LIB|g" \

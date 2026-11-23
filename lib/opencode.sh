@@ -24,6 +24,7 @@ opencode_write_launcher() {
 	cat >"$template" <<'LAUNCHER'
 #!@BASH@
 set -uo pipefail
+export TMPDIR="${TMPDIR:-@TMPDIR@}"
 bin="@BIN@"
 registry="@SERVICE@"
 log="@LOG@"
@@ -65,6 +66,7 @@ esac
 exec grun "$bin" "$@"
 LAUNCHER
 	sed -e "s|@BASH@|$PREFIX/bin/bash|g" \
+		-e "s|@TMPDIR@|$PREFIX/tmp|g" \
 		-e "s|@BIN@|$OPENCODE_BIN|g" \
 		-e "s|@SERVICE@|$OPENCODE_SERVICE|g" \
 		-e "s|@LOG@|$OPENCODE_LOG|g" \
@@ -85,7 +87,8 @@ opencode_install() {
 	tar -xzf "$tmp/pkg.tgz" -C "$tmp"
 	[ -f "$tmp/package/bin/opencode" ] || die "unexpected opencode package layout"
 	mkdir -p "$OPENCODE_DIR"
-	install -m755 "$tmp/package/bin/opencode" "$OPENCODE_BIN"
+	install -m755 "$tmp/package/bin/opencode" "$OPENCODE_DIR/opencode.new"
+	mv -f "$OPENCODE_DIR/opencode.new" "$OPENCODE_BIN"
 	rm -rf "$tmp"
 	opencode_write_launcher
 	ensure_path "$HOME_DIR/bin"

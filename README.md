@@ -13,6 +13,7 @@ Termux ships musl, while both agents ship glibc-only native binaries for `linux-
 | Claude Code (native) | `@anthropic-ai/claude-code-linux-arm64` | `$PREFIX/lib/node_modules/@anthropic-ai/claude-code-linux-arm64` |
 | OpenCode v2 (native) | `@opencode/cli-linux-arm64` | `~/.opencode/bin/opencode` |
 | OpenCode v2 (launcher) | this repo | `~/bin/opencode` |
+| OpenCode v2 (PATH entry) | this repo | `$PREFIX/bin/opencode` symlink |
 
 The installer also writes `claudesettings`, a shell shortcut that opens `~/.claude/settings.json` in `nano`.
 
@@ -51,6 +52,28 @@ bash install.sh
 6. Installs the selected version and verifies it by running `--version`.
 
 Every step is idempotent. Re-running the installer reuses the existing glibc install and only replaces the agent you select.
+
+The symlink `$PREFIX/bin/opencode` is always created, so the command resolves even when `~/bin` is not in `PATH`. If a previous `opencode` binary exists there, it is moved aside with a `.bak.<timestamp>` suffix.
+
+## Verify
+
+Menu option `5)` runs a full check on both agents:
+
+1. binary present on disk,
+2. `--version` answers,
+3. `opencode` resolves from `PATH`,
+4. the TUI boots inside a real pty for 10 seconds and keeps running.
+
+```
+[.] checking claude code
+[ok] claude version: 2.1.330 (Claude Code)
+[ok] claude tui booted and stayed alive
+[.] checking opencode
+[ok] opencode version: 2.4.1
+[ok] opencode path: /data/data/com.termux/files/usr/bin/opencode
+[ok] opencode tui booted and stayed alive
+[ok] all checks passed
+```
 
 ## Version selection
 
@@ -146,7 +169,15 @@ On macOS and Windows use the official installers from `opencode.ai` and `claude.
 ## Troubleshooting
 
 **`serve: error while loading shared libraries: serve`**
-The launcher was bypassed. Run `opencode` (from `~/bin`), not `~/.opencode/bin/opencode` directly, and make sure `~/bin` is before other entries in `PATH`.
+The launcher was bypassed. Run `opencode` (from `~/bin` or `$PREFIX/bin`), not `~/.opencode/bin/opencode` directly, and make sure the launcher is the entry point.
+
+**`opencode: command not found`**
+OpenCode installs a launcher at `~/bin/opencode` and a symlink at `$PREFIX/bin/opencode`. Run `bash install.sh`, pick `2`, then pick `5` to verify. To fix manually:
+
+```bash
+ln -sfn "$HOME/bin/opencode" "$PREFIX/bin/opencode"
+hash -r
+```
 
 **`Managed service port is already in use`**
 Another OpenCode service still holds the port. Run `opencode service stop` or `pkill -f "serve --service"`, then start again.
