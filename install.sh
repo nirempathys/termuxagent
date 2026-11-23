@@ -29,18 +29,6 @@ banner() {
 	printf '%s agent installer for termux: glibc natives, npm cli, apt builds %s\n\n' "$c_dim" "$c_reset"
 }
 
-claude_shortcut() {
-	local rc block
-	block='# termuxagent
-claudesettings() { nano "$HOME/.claude/settings.json"; }'
-	for rc in "$HOME_DIR/.bashrc" "$HOME_DIR/.zshrc"; do
-		[ -f "$rc" ] || continue
-		grep -Fq '# termuxagent' "$rc" 2>/dev/null && continue
-		printf '\n%s\n' "$block" >>"$rc"
-	done
-	ok "claudesettings shortcut available after shell reload"
-}
-
 tui_check() {
 	local command="$1" name="$2" log rc
 	log="${TMPDIR:-$PREFIX/tmp}/termuxagent-$name-tui.log"
