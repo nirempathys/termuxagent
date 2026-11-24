@@ -142,23 +142,20 @@ glibc_ldso_path() {
 	return 1
 }
 
-npm_fix_shebang() {
-	local target resolved
-	target="$1"
-	resolved="$(readlink -f "$target" 2>/dev/null || true)"
-	if [ -z "$resolved" ] || [ ! -f "$resolved" ]; then
+node_cli_wrap() {
+	local name="$1" link target
+	link="$PREFIX/bin/$name"
+	[ -L "$link" ] || return 0
+	target="$(readlink -f "$link" 2>/dev/null || true)"
+	if [ -z "$target" ] || [ ! -f "$target" ]; then
 		return 0
 	fi
-	python3 - "$resolved" "$PREFIX/bin/node" <<'PY'
-import sys
-
-path, node = sys.argv[1], sys.argv[2]
-raw = open(path, "rb").read()
-first, sep, rest = raw.partition(b"\n")
-if first.startswith(b"#!/usr/bin/env node"):
-    with open(path, "wb") as handle:
-        handle.write(("#!" + node).encode() + sep + rest)
-PY
+	rm -f "$link"
+	cat >"$link" <<WRAP
+#!$PREFIX/bin/bash
+exec $PREFIX/bin/node "$target" "\$@"
+WRAP
+	chmod 755 "$link"
 }
 
 node_pkg_version() {

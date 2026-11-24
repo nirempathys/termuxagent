@@ -68,20 +68,24 @@ codex_version() {
 }
 
 codex_install() {
-	local version="$1" triple url tmp
+	local version="$1" triple url tmp stale
 	triple="$(codex_triple)"
 	url="$REGISTRY/@openai/codex/-/codex-$version-linux-$ARCH.tgz"
 	tmp="$(mktemp -d "${TMPDIR:-$PREFIX/tmp}/codex.XXXXXX")"
 	info "downloading @openai/codex@$version"
 	curl -fL --retry 3 --connect-timeout 20 "$url" -o "$tmp/codex.tgz"
-	tar -xzf "$tmp/codex.tgz" -C "$tmp" "package/vendor/$triple/bin" "package/vendor/$triple/codex-path" 2>/dev/null || true
+	tar -xzf "$tmp/codex.tgz" -C "$tmp" "package/vendor/$triple"
 	[ -x "$tmp/package/vendor/$triple/bin/codex" ] || die "codex binary missing in package"
-	rm -rf "$CODEX_HOME/$version"
 	mkdir -p "$CODEX_HOME"
+	rm -rf "$CODEX_HOME/$version"
 	mv "$tmp/package/vendor/$triple" "$CODEX_HOME/$version"
-	chmod 755 "$CODEX_HOME/$version/bin/"*
+	chmod 755 "$CODEX_HOME/$version/bin/"* 2>/dev/null || true
 	printf '%s\n' "$version" >"$CODEX_HOME/version"
 	ln -sfn "$CODEX_HOME/$version/bin/codex" "$PREFIX/bin/codex"
+	for stale in "$CODEX_HOME"/*/; do
+		[ -d "$stale" ] || continue
+		[ "$(basename "$stale")" = "$version" ] || rm -rf "$stale"
+	done
 	rm -rf "$tmp"
 	ok "codex $version installed"
 }
@@ -108,7 +112,7 @@ gemini_version() {
 
 gemini_install() {
 	npm_global_install "@google/gemini-cli" "$1"
-	npm_fix_shebang "$PREFIX/bin/gemini"
+	node_cli_wrap gemini "$PREFIX/bin/gemini"
 	ok "gemini $1 installed"
 }
 
@@ -118,7 +122,7 @@ qwen_version() {
 
 qwen_install() {
 	npm_global_install "@qwen-code/qwen-code" "$1"
-	npm_fix_shebang "$PREFIX/bin/qwen"
+	node_cli_wrap qwen "$PREFIX/bin/qwen"
 	ok "qwen $1 installed"
 }
 
@@ -128,8 +132,9 @@ dsh_version() {
 
 dsh_install() {
 	npm_global_install "@deepseek-ai/dsh" "$1" --ignore-scripts
-	npm_fix_shebang "$PREFIX/bin/dsh"
+	node_cli_wrap dsh "$PREFIX/bin/dsh"
 	ok "deepseek harness $1 installed"
+	warn "dsh runtime needs android native prebuilds that upstream does not publish, only --version is usable"
 }
 
 AGY_MANIFEST="https://antigravity-cli-auto-updater-974169037036.us-central1.run.app/manifests/android_$ARCH.json"

@@ -30,19 +30,30 @@ banner() {
 }
 
 tui_check() {
-	local command="$1" name="$2" log rc
+	local command="$1" name="$2" log rc text
 	log="${TMPDIR:-$PREFIX/tmp}/termuxagent-$name-tui.log"
 	if ! command -v script >/dev/null 2>&1; then
 		warn "$name tui skipped, script not available"
 		return 0
 	fi
-	timeout 10 script -qec "$command" /dev/null </dev/null >"$log" 2>&1
+	timeout 12 script -qec "stty rows 40 cols 100 2>/dev/null; $command" /dev/null </dev/null >"$log" 2>&1
 	rc=$?
-	if [ "$rc" -eq 124 ]; then
-		ok "$name tui booted and stayed alive"
+	text="$(python3 - "$log" <<'PY'
+import re
+import sys
+
+raw = open(sys.argv[1], "rb").read().decode("utf-8", "replace")
+raw = re.sub(r"\x1b\[[0-9;?<>=]*[a-zA-Z]", "", raw)
+raw = re.sub(r"\x1b\][^\x07\x1b]*(\x07|\x1b\\)", "", raw)
+raw = re.sub(r"[\x00-\x08\x0b-\x1f\x7f]", "", raw)
+print(" ".join(re.findall(r"[A-Za-z][A-Za-z0-9_.:-]{2,}", raw))[:200])
+PY
+)"
+	if [ "$rc" -eq 124 ] && [ -n "$text" ]; then
+		ok "$name tui rendered and stayed alive"
 		return 0
 	fi
-	if [ "$rc" -eq 0 ] && [ -s "$log" ]; then
+	if [ "$rc" -eq 0 ] && [ -n "$text" ]; then
 		ok "$name tui started and exited cleanly"
 		return 0
 	fi

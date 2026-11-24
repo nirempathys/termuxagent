@@ -83,7 +83,7 @@ Menu option `v` checks every agent on this device:
 
 1. version readable from disk,
 2. command resolves from `PATH`,
-3. the TUI boots inside a real pty for 10 seconds and keeps running.
+3. the TUI boots inside a real pty with a fixed terminal size, renders visible text, and keeps running for 10 seconds.
 
 ```
 [ok] claude code: 2.1.330
@@ -96,8 +96,8 @@ Menu option `v` checks every agent on this device:
     copilot -> /data/data/com.termux/files/usr/bin/copilot
 [ok] gemini cli: 0.70.0
 ...
-[ok] claude tui booted and stayed alive
-[ok] opencode tui booted and stayed alive
+[ok] claude tui rendered and stayed alive
+[ok] opencode tui rendered and stayed alive
 [!] deepseek harness: no tui probe, cli verified
 [ok] all checks passed
 ```
@@ -113,7 +113,7 @@ codex                  # Codex CLI
 copilot                # GitHub Copilot CLI
 gemini                 # Gemini CLI
 qwen                   # Qwen Code
-dsh --profile tui      # DeepSeek Harness
+dsh --version          # DeepSeek Harness (runtime blocked, see notes)
 agy                    # Antigravity CLI
 hermes --tui           # Hermes Agent
 claudesettings         # nano ~/.claude/settings.json
@@ -147,14 +147,14 @@ The `~/bin/opencode` launcher prevents that re-exec. Before the CLI starts, it l
 
 ### Codex
 
-The npm `@openai/codex` package is a shim, and its platform packages are published as `@openai/codex@<version>-linux-arm64`. Installing one of those with `npm install -g` replaces the main package and breaks the shim. The installer therefore downloads the platform tarball directly and extracts the static musl binary:
+The npm `@openai/codex` package is a shim, and its platform packages are published as `@openai/codex@<version>-linux-arm64`. Installing one of those with `npm install -g` replaces the main package and breaks the shim. The installer therefore downloads the platform tarball directly and extracts the complete vendor tree:
 
 ```
 https://registry.npmjs.org/@openai/codex/-/codex-<version>-linux-arm64.tgz
-package/vendor/aarch64-unknown-linux-musl/bin/codex
+package/vendor/aarch64-unknown-linux-musl/{bin,codex-path,codex-resources,codex-package.json}
 ```
 
-The binary is unpacked to `~/.codex-native/<version>` and linked at `$PREFIX/bin/codex`. Because it is statically linked musl, it does not need glibc or `grun`.
+The tree is unpacked to `~/.codex-native/<version>` and linked at `$PREFIX/bin/codex`. The `codex-package.json` marker and the resources directory are required: without them the TUI reports `this CLI has no complete local package`. The binary itself is statically linked musl, so it does not need glibc or `grun`. One version is kept at a time, about 430 MB, and older directories are removed when you switch.
 
 ### Copilot
 
@@ -169,11 +169,18 @@ Adding an rpath as well makes the binary crash with `SIGSEGV`, so the installer 
 
 ### Gemini CLI and Qwen Code
 
-Both are plain npm global packages that work under Termux node. npm keeps the `#!/usr/bin/env node` shebang, which fails on Android because `/usr/bin/env` does not exist. The installer rewrites the shebang of the resolved entry file to `#!$PREFIX/bin/node`.
+Both are plain npm global packages that work under Termux node. npm writes a launcher whose shebang is `#!/usr/bin/env node`, which fails on Android because `/usr/bin/env` does not exist. The installer replaces that launcher with a small wrapper:
+
+```bash
+#!/data/data/com.termux/files/usr/bin/bash
+exec /data/data/com.termux/files/usr/bin/node /path/to/real/entry.js "$@"
+```
+
+The wrapper survives self-updates and npm re-links, because npm only rewrites `$PREFIX/bin/<name>` on install and the installer recreates the wrapper each time.
 
 ### DeepSeek Harness
 
-`@deepseek-ai/dsh` has a native dependency (`koffi`) whose build step fails on Termux. The installer uses `--ignore-scripts`, which is enough for `dsh --version` and the CLI entry point but not for the TUI profile, which loads the native module at runtime. Use `dsh headless` or the web profile, or install from a glibc environment if you need the TUI.
+`@deepseek-ai/dsh` has native dependencies with no Android prebuilds. `node-addon-require-builtin` looks for `build/napi/napi-v9-android-arm64/require_builtin.node`, which upstream does not publish, and `koffi` only ships glibc and musl binaries. The installer uses `--ignore-scripts`, which is enough for `dsh --version` but not for the TUI, the web profile, or `dsh headless`. Treat the install as a version probe until upstream publishes Android builds.
 
 Only prerelease versions are published, so the version list includes them.
 
@@ -209,7 +216,7 @@ $HOME/.opencode/bin/opencode                    OpenCode v2 binary
 $HOME/.opencode/service.log                     OpenCode service log
 $HOME/bin/opencode                              OpenCode launcher
 $HOME/.local/state/opencode/service.json        OpenCode service registration
-$HOME/.codex-native/<version>/bin/codex         Codex binary
+$HOME/.codex-native/<version>/                  Codex package tree
 $PREFIX/bin/codex                               symlink -> Codex binary
 $PREFIX/lib/node_modules/@github/               Copilot packages
 $PREFIX/bin/copilot                             symlink -> patched native binary
@@ -248,12 +255,7 @@ This repo is only needed on Termux, where the musl userland cannot load glibc bi
 ## Troubleshooting
 
 **`bad interpreter: /usr/bin/env: no such file or directory`**
-An npm package kept its `#!/usr/bin/env node` shebang. Run the installer again for that agent, or fix it manually:
-
-```bash
-pkg install -y python
-python3 -c "import sys; p=sys.argv[1]; d=open(p,'rb').read(); f,s,r=d.partition(b'\n'); open(p,'wb').write(b'#!/data/data/com.termux/files/usr/bin/node'+s+r) if f.startswith(b'#!/usr/bin/env node') else None" "$(readlink -f $PREFIX/bin/gemini)"
-```
+An npm launcher kept its `#!/usr/bin/env node` shebang. Run the installer again for that agent; it replaces the launcher with a wrapper that calls `$PREFIX/bin/node` directly.
 
 **Copilot exits with `SIGSEGV` or `139`**
 The binary has an rpath that points at a missing glibc path. Re-run the installer for Copilot, which sets the interpreter only:
@@ -276,7 +278,7 @@ bash install.sh
 ```
 
 **`dsh` crashes with a koffi or native module error**
-The TUI profile needs a native build that is skipped on Termux. Use `dsh --version` to confirm the CLI, and prefer `dsh headless`.
+`node-addon-require-builtin` has no Android prebuild. `dsh --version` works, the runtime profiles do not. There is no local fix until upstream publishes the addon for Android.
 
 **`hermes` repository returns `404`**
 The stable channel is not published. The installer falls back to canary automatically. If it still fails, remove the source and retry:
@@ -317,7 +319,7 @@ Native packages are published per platform. Verify the architecture with `uname 
 
 ```
 install.sh          entry point, bootstrap, base packages, menu, verify
-lib/common.sh       helpers, version lookup, version picker, shebang and patchelf helpers
+lib/common.sh       helpers, version lookup, version picker, node wrapper and patchelf helpers
 lib/glibc.sh        glibc detection and installation
 lib/claude.sh       Claude Code install, wrapper, settings patch
 lib/opencode.sh     OpenCode v2 install, service launcher
